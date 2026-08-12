@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Renew DNSHE free subdomains and optionally send a Bark notification."""
+"""自动续期 DNSHE 免费子域名，并可选地推送 Bark 通知。"""
 
 from __future__ import annotations
 
@@ -46,15 +46,15 @@ def request_json(method: str, url: str, api_key: str | None = None,
         except json.JSONDecodeError:
             payload = {}
         payload.setdefault("success", False)
-        payload.setdefault("message", f"HTTP {exc.code}: {raw[:300]}")
+        payload.setdefault("message", f"HTTP 请求失败（状态码 {exc.code}）：{raw[:300]}")
         return payload
     except URLError as exc:
-        return {"success": False, "message": f"Network error: {exc.reason}"}
+        return {"success": False, "message": f"网络请求失败：{exc.reason}"}
 
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        return {"success": False, "message": f"Invalid JSON response: {raw[:300]}"}
+        return {"success": False, "message": f"接口返回了无效 JSON：{raw[:300]}"}
 
 
 def list_subdomains(api_key: str, api_secret: str) -> list[dict[str, Any]]:
@@ -67,7 +67,7 @@ def list_subdomains(api_key: str, api_secret: str) -> list[dict[str, Any]]:
         }
         response = request_json("GET", f"{API_URL}&{urlencode(params)}", api_key, api_secret)
         if not response.get("success"):
-            raise RuntimeError(response.get("message", "Unable to list subdomains"))
+            raise RuntimeError(response.get("message", "无法获取子域名列表"))
         all_domains.extend(response.get("subdomains", []))
         if not response.get("pagination", {}).get("has_more"):
             return all_domains
@@ -75,7 +75,7 @@ def list_subdomains(api_key: str, api_secret: str) -> list[dict[str, Any]]:
 
 
 def configured_domains() -> set[str]:
-    """Return an optional comma/newline-separated domain allowlist."""
+    """读取可选的域名白名单，支持逗号或换行分隔。"""
     value = os.environ.get("DNSHE_DOMAINS", "").strip()
     return {item.strip().lower() for item in value.replace("\n", ",").split(",") if item.strip()}
 
@@ -87,23 +87,26 @@ def renew_domains(api_key: str, api_secret: str) -> list[RenewalResult]:
         domains = [d for d in domains if str(d.get("full_domain", "")).lower() in allowlist]
         found = {str(d.get("full_domain", "")).lower() for d in domains}
         missing = allowlist - found
-        results = [RenewalResult(domain, "failed", "Domain not found in this API account") for domain in sorted(missing)]
+        results = [RenewalResult(domain, "failed", "当前 DNSHE API Key 名下未找到该域名") for domain in sorted(missing)]
     else:
         results = []
 
     for domain in domains:
         name = str(domain.get("full_domain") or domain.get("id"))
         if domain.get("never_expires"):
-            results.append(RenewalResult(name, "skipped", "Never expires"))
+            results.append(RenewalResult(name, "skipped", "该域名设置为永不过期，无需续期"))
             continue
         response = request_json(
             "POST", f"{API_URL}&endpoint=subdomains&action=renew", api_key, api_secret,
             {"subdomain_id": domain["id"]},
         )
-        message = str(response.get("message", "No message"))
+        message = str(response.get("message", "接口未返回说明信息"))
         if response.get("success"):
             expiry = response.get("new_expires_at")
-            results.append(RenewalResult(name, "renewed", f"{message}" + (f"; expires {expiry}" if expiry else "")))
+            detail = "DNSHE 接口续期成功"
+            if expiry:
+                detail += f"，新到期时间：{expiry}"
+            results.append(RenewalResult(name, "renewed", detail))
         elif response.get("error_code") == "renewal_not_yet_available" or "not yet available" in message.lower():
             results.append(RenewalResult(name, "not_due", message))
         else:
@@ -112,12 +115,12 @@ def renew_domains(api_key: str, api_secret: str) -> list[RenewalResult]:
 
 
 def notify_bark(bark_url: str, title: str, body: str, level: str) -> None:
-    # Bark's endpoint accepts a JSON POST. A full endpoint URL keeps self-hosted Bark compatible.
+    # Bark 接口接受 JSON POST；使用完整地址也兼容自建 Bark 服务。
     response = request_json("POST", bark_url.rstrip("/"), body={
         "title": title, "body": body, "group": "DNSHE", "level": level,
     })
     if not response.get("code", 200) == 200 and response.get("success") is False:
-        raise RuntimeError(response.get("message", "Bark notification failed"))
+        raise RuntimeError(response.get("message", "Bark 推送失败"))
 
 
 def main() -> int:
@@ -125,26 +128,26 @@ def main() -> int:
     api_secret = os.environ.get("DNSHE_API_SECRET")
     bark_url = os.environ.get("BARK_URL", "").strip()
     if not api_key or not api_secret:
-        print("DNSHE_API_KEY and DNSHE_API_SECRET must be set.", file=sys.stderr)
+        print("必须设置 DNSHE_API_KEY 和 DNSHE_API_SECRET。", file=sys.stderr)
         return 2
 
     try:
         results = renew_domains(api_key, api_secret)
     except RuntimeError as exc:
-        summary = f"DNSHE renewal failed before processing domains: {exc}"
+        summary = f"DNSHE 域名续期任务在处理域名之前失败：{exc}"
         print(summary, file=sys.stderr)
         if bark_url:
             try:
-                notify_bark(bark_url, "DNSHE renewal failed", summary, "critical")
+                notify_bark(bark_url, "DNSHE 域名续期失败", summary, "critical")
             except RuntimeError as bark_exc:
-                print(f"Bark notification failed: {bark_exc}", file=sys.stderr)
+                print(f"Bark 推送失败：{bark_exc}", file=sys.stderr)
         return 1
 
     counts = {outcome: sum(r.outcome == outcome for r in results) for outcome in ("renewed", "not_due", "skipped", "failed")}
     labels = {
         "renewed": "续期成功", "not_due": "暂未开放续期", "skipped": "已跳过", "failed": "续期失败",
     }
-    scope = ", ".join(sorted(configured_domains())) if configured_domains() else "API Key 名下全部子域名"
+    scope = ", ".join(sorted(configured_domains())) if configured_domains() else "当前 API Key 名下全部子域名"
     beijing_tz = timezone(timedelta(hours=8), name="北京时间")
     executed_at = datetime.now(timezone.utc).astimezone(beijing_tz).strftime("%Y-%m-%d %H:%M:%S %Z")
     lines = [f"• {r.domain}\n  结果：{labels[r.outcome]}\n  详情：{r.detail}" for r in results]
@@ -166,7 +169,7 @@ def main() -> int:
         try:
             notify_bark(bark_url, "DNSHE 域名续期" + ("失败" if failed else "完成"), summary, "critical" if failed else "active")
         except RuntimeError as exc:
-            print(f"Bark notification failed: {exc}", file=sys.stderr)
+            print(f"Bark 推送失败：{exc}", file=sys.stderr)
             failed = True
     return 1 if failed else 0
 
