@@ -2,8 +2,8 @@ name: DNSHE domain renewal
 
 on:
   schedule:
-    # 00:15 UTC = 08:15 China Standard Time. GitHub may delay scheduled workflows.
-    - cron: "15 0 * * *"
+    # 每月 1 日 00:15 UTC = 北京时间 08:15。GitHub 定时任务可能延迟排队。
+    - cron: "15 0 1 * *"
   workflow_dispatch:
     inputs:
       domains:
