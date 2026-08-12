@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -140,14 +141,30 @@ def main() -> int:
         return 1
 
     counts = {outcome: sum(r.outcome == outcome for r in results) for outcome in ("renewed", "not_due", "skipped", "failed")}
-    lines = [f"{r.domain}: {r.outcome} — {r.detail}" for r in results] or ["No matching subdomains."]
-    summary = "DNSHE renewal: " + ", ".join(f"{k}={v}" for k, v in counts.items()) + "\n" + "\n".join(lines)
+    labels = {
+        "renewed": "续期成功", "not_due": "暂未开放续期", "skipped": "已跳过", "failed": "续期失败",
+    }
+    scope = ", ".join(sorted(configured_domains())) if configured_domains() else "API Key 名下全部子域名"
+    beijing_tz = timezone(timedelta(hours=8), name="北京时间")
+    executed_at = datetime.now(timezone.utc).astimezone(beijing_tz).strftime("%Y-%m-%d %H:%M:%S %Z")
+    lines = [f"• {r.domain}\n  结果：{labels[r.outcome]}\n  详情：{r.detail}" for r in results]
+    if not lines:
+        lines = ["未找到符合条件的子域名，未执行续期。"]
+    summary = (
+        "DNSHE 域名自动续期执行报告\n"
+        f"执行时间：{executed_at}\n"
+        f"处理范围：{scope}\n"
+        "统计："
+        + "，".join(f"{labels[key]} {counts[key]} 个" for key in counts)
+        + "\n\n域名明细：\n"
+        + "\n".join(lines)
+    )
     print(summary)
 
     failed = counts["failed"] > 0
     if bark_url:
         try:
-            notify_bark(bark_url, "DNSHE renewal " + ("failed" if failed else "completed"), summary, "critical" if failed else "active")
+            notify_bark(bark_url, "DNSHE 域名续期" + ("失败" if failed else "完成"), summary, "critical" if failed else "active")
         except RuntimeError as exc:
             print(f"Bark notification failed: {exc}", file=sys.stderr)
             failed = True
