@@ -1,0 +1,26 @@
+name: DNSHE domain renewal
+
+on:
+  schedule:
+    # 00:15 UTC = 08:15 China Standard Time. GitHub may delay scheduled workflows.
+    - cron: "15 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Renew DNSHE subdomains
+        env:
+          DNSHE_API_KEY: ${{ secrets.DNSHE_API_KEY }}
+          DNSHE_API_SECRET: ${{ secrets.DNSHE_API_SECRET }}
+          # Optional: only renew these full domains, comma-separated.
+          DNSHE_DOMAINS: ${{ vars.DNSHE_DOMAINS }}
+          # Full Bark endpoint, e.g. https://api.day.app/YOUR_DEVICE_KEY
+          BARK_URL: ${{ secrets.BARK_URL }}
+        run: python3 renew.py
