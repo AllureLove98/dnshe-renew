@@ -31,4 +31,6 @@ jobs:
           # Telegram Bot API 凭据（可选，与 Bark 可同时启用）
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # 设为 1/true/yes 时在日志中显示域名明细（默认隐藏，避免泄露域名）
+          DNSHE_LOG_DOMAINS: ${{ vars.DNSHE_LOG_DOMAINS }}
         run: python3 renew.py

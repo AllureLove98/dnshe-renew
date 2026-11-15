@@ -193,7 +193,20 @@ def main() -> int:
         + "\n\n域名明细：\n"
         + "\n".join(lines)
     )
-    print(summary)
+
+    # 完整报告（含域名明细）只推送到 Bark/Telegram 等私有渠道；
+    # 日志默认只打印统计信息，避免在 GitHub Actions 日志中泄露域名。
+    log_summary = (
+        "DNSHE 域名自动续期执行报告\n"
+        f"执行时间：{executed_at}\n"
+        f"处理范围：{scope}\n"
+        "统计："
+        + "，".join(f"{labels[key]} {counts[key]} 个" for key in counts)
+        + "\n（域名明细已隐藏，仅通过 Bark/Telegram 推送）"
+    )
+    if os.environ.get("DNSHE_LOG_DOMAINS", "").strip().lower() in ("1", "true", "yes"):
+        log_summary += "\n\n域名明细：\n" + "\n".join(lines)
+    print(log_summary)
 
     failed = counts["failed"] > 0
     notify("DNSHE 域名续期" + ("失败" if failed else "完成"), summary, "critical" if failed else "active")
