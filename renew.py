@@ -25,9 +25,17 @@ class RenewalResult:
     detail: str
 
 
+# 模拟常见浏览器的 User-Agent，避免被 Cloudflare 的机器人检测（Error 1010）拦截。
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36"
+)
+
+
 def request_json(method: str, url: str, api_key: str | None = None,
                  api_secret: str | None = None, body: dict[str, Any] | None = None) -> dict[str, Any]:
-    headers = {"Accept": "application/json"}
+    headers = {"Accept": "application/json", "User-Agent": USER_AGENT}
     data = None
     if api_key and api_secret:
         headers.update({"X-API-Key": api_key, "X-API-Secret": api_secret})
