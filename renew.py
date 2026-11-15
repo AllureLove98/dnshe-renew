@@ -131,24 +131,47 @@ def notify_bark(bark_url: str, title: str, body: str, level: str) -> None:
         raise RuntimeError(response.get("message", "Bark 推送失败"))
 
 
+def notify_telegram(bot_token: str, chat_id: str, title: str, body: str) -> None:
+    # 通过 Telegram Bot API 发送消息；HTML 解析以支持加粗标题。
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    response = request_json("POST", url, body={
+        "chat_id": chat_id,
+        "text": f"<b>{title}</b>\n\n{body}",
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    })
+    if not response.get("ok"):
+        raise RuntimeError(response.get("description", "Telegram 推送失败"))
+
+
 def main() -> int:
     api_key = os.environ.get("DNSHE_API_KEY")
     api_secret = os.environ.get("DNSHE_API_SECRET")
     bark_url = os.environ.get("BARK_URL", "").strip()
+    telegram_bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    telegram_chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     if not api_key or not api_secret:
         print("必须设置 DNSHE_API_KEY 和 DNSHE_API_SECRET。", file=sys.stderr)
         return 2
+
+    def notify(title: str, body: str, level: str) -> None:
+        if bark_url:
+            try:
+                notify_bark(bark_url, title, body, level)
+            except RuntimeError as exc:
+                print(f"Bark 推送失败：{exc}", file=sys.stderr)
+        if telegram_bot_token and telegram_chat_id:
+            try:
+                notify_telegram(telegram_bot_token, telegram_chat_id, title, body)
+            except RuntimeError as exc:
+                print(f"Telegram 推送失败：{exc}", file=sys.stderr)
 
     try:
         results = renew_domains(api_key, api_secret)
     except RuntimeError as exc:
         summary = f"DNSHE 域名续期任务在处理域名之前失败：{exc}"
         print(summary, file=sys.stderr)
-        if bark_url:
-            try:
-                notify_bark(bark_url, "DNSHE 域名续期失败", summary, "critical")
-            except RuntimeError as bark_exc:
-                print(f"Bark 推送失败：{bark_exc}", file=sys.stderr)
+        notify("DNSHE 域名续期失败", summary, "critical")
         return 1
 
     counts = {outcome: sum(r.outcome == outcome for r in results) for outcome in ("renewed", "not_due", "skipped", "failed")}
@@ -173,12 +196,7 @@ def main() -> int:
     print(summary)
 
     failed = counts["failed"] > 0
-    if bark_url:
-        try:
-            notify_bark(bark_url, "DNSHE 域名续期" + ("失败" if failed else "完成"), summary, "critical" if failed else "active")
-        except RuntimeError as exc:
-            print(f"Bark 推送失败：{exc}", file=sys.stderr)
-            failed = True
+    notify("DNSHE 域名续期" + ("失败" if failed else "完成"), summary, "critical" if failed else "active")
     return 1 if failed else 0
 
 
